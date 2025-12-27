@@ -9,6 +9,9 @@ from slowapi.util import get_remote_address
 from services.exceptions import UrlExpiredError, ShortCodeNotFoundError
 from fastapi.responses import JSONResponse
 
+# Import models to ensure they're registered with SQLAlchemy
+from models import url as _, user as __  # noqa: F401
+
 # Import limiter instance from routes.url to match decorators
 from routes.url import limiter as route_limiter
 

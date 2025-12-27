@@ -15,21 +15,12 @@ class UrlCreateRequest(BaseModel):
         }
 
 class UrlCreateResponse(BaseModel):
-    short_code: str = Field(..., description="The generated short code")
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "short_code": "abc123"
-            }
-        }
-
-class UrlCreateResponse(BaseModel):
     short_code: str = Field(..., description="The generated short code for the URL")
     long_url: HttpUrl = Field(..., description="The original long URL")
     class Config:
-        schema_extra = {
-            "example" : {
-                "short_code": "myalias",
+        json_schema_extra = {
+            "example": {
+                "short_code": "abc123",
                 "long_url": "https://www.example.com/some/long/path"
             }
         }

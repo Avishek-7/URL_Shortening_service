@@ -41,7 +41,7 @@ async def create_url(
         redis=redis,
         user_id=None,
     )
-    return UrlCreateResponse(short_code=short_code)
+    return UrlCreateResponse(short_code=short_code, long_url=url_request.original_url)
 
 @router.get("/{short_code}", response_model=UrlMetadataResponse)
 @limiter.limit(f"{os.getenv('RATE_LIMIT', '5/minute')} burst {os.getenv('RATE_LIMIT_BURST', '10')}")

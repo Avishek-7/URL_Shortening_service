@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Text, DateTime, func
+from sqlalchemy import Column, Integer, Text, DateTime, ForeignKey, func
 from sqlalchemy.orm import relationship
 from db.database import Base
 
@@ -11,5 +11,5 @@ class URL(Base):
     clicks = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
     expires_at = Column(DateTime, nullable=True)
-    user_id = Column(Integer, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     user = relationship("User", back_populates="urls")
