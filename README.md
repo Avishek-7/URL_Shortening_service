@@ -1,4 +1,4 @@
-# API Shortening Service
+# URL Shortening Service
 
 A high-performance URL shortening service built with FastAPI, featuring Redis caching, async database operations, and eventual consistency for click tracking.
 
@@ -25,7 +25,7 @@ A high-performance URL shortening service built with FastAPI, featuring Redis ca
 ## Project Structure
 
 ```
-API_Shortening_service/
+URL_Shortening_service/
 ├── db/
 │   └── database.py          # Async database configuration
 ├── models/
