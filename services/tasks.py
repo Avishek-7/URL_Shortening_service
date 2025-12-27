@@ -1,0 +1,29 @@
+import asyncio
+import os
+
+from celery import Celery
+from dotenv import load_dotenv
+
+from db.database import AsyncSessionLocal
+from services.url_service import flush_click_counts
+from redis.asyncio import from_url as redis_from_url
+
+load_dotenv()
+
+celery_app = Celery(
+    "api_shortening_service",
+    broker=os.getenv("CELERY_BROKER_URL"),
+    backend=os.getenv("CELERY_RESULT_BACKEND"),
+)
+
+
+@celery_app.task(name="flush_click_counts")
+def flush_click_counts_task() -> None:
+    async def _flush() -> None:
+        redis = redis_from_url(os.getenv("REDIS_URL"))
+        async with AsyncSessionLocal() as session:
+            await flush_click_counts(redis, session)
+        if hasattr(redis, "close"):
+            await redis.close()
+
+    asyncio.run(_flush())
