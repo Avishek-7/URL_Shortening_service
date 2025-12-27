@@ -60,7 +60,7 @@ URL_Shortening_service/
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd API_Shortening_service
+cd URL_Shortening_service
 ```
 
 2. Create and activate virtual environment:
