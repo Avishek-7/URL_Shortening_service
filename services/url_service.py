@@ -38,18 +38,7 @@ async def create_short_url(long_url: str, db: AsyncSession, redis, user_id: int 
 async def resolve_short_code(short_code: str, db: AsyncSession, redis) -> str | None:
     long_url = await redis.get(_redis_key(short_code))
     if long_url:
-        expires_at_result = await db.execute(select(URL.expires_at).where(URL.short_code == short_code))
-        expires_at = expires_at_result.scalar_one_or_none()
-        if expires_at and datetime.utcnow() > expires_at:
-            await redis.delete(_redis_key(short_code))
-            raise UrlExpiredError()
-        ttl = _ttl_seconds(expires_at)
-        if ttl is None:
-            return long_url.decode('utf-8')
-        if ttl <= 0:
-            await redis.delete(_redis_key(short_code))
-            raise UrlExpiredError()
-        await redis.expire(_redis_key(short_code), ttl)
+        # Rely solely on Redis TTL; do not query DB on cache hit
         return long_url.decode('utf-8')
 
     result = await db.execute(select(URL).where(URL.short_code == short_code))
@@ -126,7 +115,7 @@ async def _cache_metadata(redis, url_entry: URL) -> None:
         "short_code": url_entry.short_code,
         "clicks": url_entry.clicks,
         "created_at": url_entry.created_at.isoformat() if url_entry.created_at else None,
-        "expires_at": url_entry.expires_at.isoformat() if url_entry.expires_at else None,
+        # Do not store expires_at in Redis; use key TTL only
         "user_id": url_entry.user_id,
     }
     ttl = _ttl_seconds(url_entry.expires_at)

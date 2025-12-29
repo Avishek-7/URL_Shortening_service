@@ -179,9 +179,15 @@ GET /url/{short_code}
 
 ### Redis Caching Strategy
 
-1. **URL Cache** (`short:{code}`): Stores long URL for fast redirects
+1. **URL Cache** (`short:{code}`): Stores long URL for fast redirects with TTL set from DB expiration
 2. **Click Counters** (`url:clicks:{code}`): Eventual consistency for high-write performance
-3. **Metadata Cache** (`url:meta:{code}`): Full URL metadata with click deltas
+3. **Metadata Cache** (`url:meta:{code}`): URL metadata and click deltas cached with the same TTL as the URL
+
+#### Caching Behavior
+- Best practice: Do not store `expires_at` in Redis; rely on key TTL.
+- On Redis hit: Serve directly from cache without querying the database.
+- On Redis miss: Query DB, validate expiration, then cache with appropriate TTL.
+- Metadata cache excludes `expires_at` to avoid DB checks on cache hits; it is returned only when fetched from DB on cache miss.
 
 ### Eventual Consistency
 
