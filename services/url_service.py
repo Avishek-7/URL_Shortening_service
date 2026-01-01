@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,13 +12,21 @@ KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "short:")
 CLICK_PREFIX = os.getenv("REDIS_CLICK_PREFIX", "url:clicks:")
 META_PREFIX = os.getenv("REDIS_META_PREFIX", "url:meta:")
 
-async def create_short_url(long_url: str, db: AsyncSession, redis, user_id: int | None = None) -> str:
+async def create_short_url(
+    long_url: str,
+    db: AsyncSession,
+    redis,
+    user_id: int | None = None,
+    expire_in_days: int | None = None,
+) -> str:
     existing_url_result = await db.execute(select(URL).where(URL.long_url == long_url))
     existing_url = existing_url_result.scalar_one_or_none()
     if existing_url:
         return existing_url.short_code
 
     new_url = URL(long_url=long_url, user_id=user_id)
+    if expire_in_days:
+        new_url.expires_at = datetime.utcnow() + timedelta(days=expire_in_days)
     db.add(new_url)
     await db.commit()
     await db.refresh(new_url)

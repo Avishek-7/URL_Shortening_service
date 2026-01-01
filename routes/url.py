@@ -40,6 +40,7 @@ async def create_url(
         db=db,
         redis=redis,
         user_id=None,
+        expire_in_days=url_request.expire_in_days,
     )
     return UrlCreateResponse(short_code=short_code, long_url=url_request.original_url)
 
