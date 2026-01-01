@@ -30,6 +30,9 @@ celery_app.conf.timezone = os.getenv("CELERY_TIMEZONE", "UTC")
 @celery_app.task(name="flush_click_counts")
 def flush_click_counts_task() -> None:
     async def _flush() -> None:
+        # Import models so SQLAlchemy metadata is populated before queries
+        from models import url, user  # noqa: F401
+        
         redis = redis_from_url(os.getenv("REDIS_URL"))
         async with AsyncSessionLocal() as session:
             await flush_click_counts(redis, session)
