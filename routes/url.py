@@ -1,4 +1,5 @@
 import os
+import re
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from slowapi import Limiter
@@ -18,7 +19,11 @@ from schemas.url_schemas import (
     UrlResponse,
     UrlMetadataResponse,
 )
-from services.exceptions import UrlExpiredError, ShortCodeNotFoundError
+from services.exceptions import (
+    UrlExpiredError,
+    ShortCodeNotFoundError,
+    AliasAlreadyInUseError,
+)
 
 router = APIRouter(prefix="/url", tags=["URL Management"])
 redirect_router = APIRouter(tags=["Redirects"])
@@ -28,30 +33,54 @@ if not REDIS_URL:
     raise RuntimeError("REDIS_URL is not configured. Set REDIS_URL in environment.")
 redis = redis_from_url(REDIS_URL)
 
+_SHORT_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+
+
+def _validate_short_code(short_code: str) -> str:
+    code = (short_code or "").strip()
+    if not code or not _SHORT_CODE_RE.fullmatch(code):
+        raise HTTPException(status_code=404, detail="Short code not found")
+    return code
+
+
 @router.post("/create", response_model=UrlCreateResponse)
-@limiter.limit(f"{os.getenv('RATE_LIMIT', '5/minute')} burst {os.getenv('RATE_LIMIT_BURST', '10')}")
+@limiter.limit(
+    f"{os.getenv('RATE_LIMIT', '5/minute')} burst {os.getenv('RATE_LIMIT_BURST', '10')}"
+)
 async def create_url(
     request: Request,
     url_request: UrlCreateRequest,
     db: AsyncSession = Depends(get_db),
 ) -> UrlCreateResponse:
-    short_code = await create_short_url(
-        long_url=str(url_request.original_url),
-        db=db,
-        redis=redis,
-        user_id=None,
-        expire_in_days=url_request.expire_in_days,
-    )
-    return UrlCreateResponse(short_code=short_code, long_url=url_request.original_url)
+    try:
+        short_code = await create_short_url(
+            long_url=str(url_request.original_url),
+            db=db,
+            redis=redis,
+            user_id=None,
+            expire_in_days=url_request.expire_in_days,
+            custom_alias=url_request.custom_alias,
+        )
+        return UrlCreateResponse(
+            short_code=short_code, long_url=url_request.original_url
+        )
+    except AliasAlreadyInUseError:
+        raise HTTPException(status_code=409, detail="custom_alias is already in use")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
 
 @router.get("/{short_code}", response_model=UrlMetadataResponse)
-@limiter.limit(f"{os.getenv('RATE_LIMIT', '5/minute')} burst {os.getenv('RATE_LIMIT_BURST', '10')}")
+@limiter.limit(
+    f"{os.getenv('RATE_LIMIT', '5/minute')} burst {os.getenv('RATE_LIMIT_BURST', '10')}"
+)
 async def get_metadata(
     request: Request,
     short_code: str,
     db: AsyncSession = Depends(get_db),
 ) -> UrlMetadataResponse:
     try:
+        short_code = _validate_short_code(short_code)
         meta = await get_url_metadata(short_code=short_code, db=db, redis=redis)
         return UrlMetadataResponse(**meta)
     except UrlExpiredError:
@@ -61,13 +90,16 @@ async def get_metadata(
 
 
 @redirect_router.get("/r/{short_code}")
-@limiter.limit(f"{os.getenv('RATE_LIMIT', '5/minute')} burst {os.getenv('RATE_LIMIT_BURST', '10')}")
+@limiter.limit(
+    f"{os.getenv('RATE_LIMIT', '5/minute')} burst {os.getenv('RATE_LIMIT_BURST', '10')}"
+)
 async def redirect_short_code(
     request: Request,
     short_code: str,
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        short_code = _validate_short_code(short_code)
         long_url = await resolve_short_code(short_code=short_code, db=db, redis=redis)
         await increment_clicks(short_code=short_code, redis=redis, db=None)
         return RedirectResponse(url=long_url, status_code=302)
@@ -75,13 +107,3 @@ async def redirect_short_code(
         raise HTTPException(status_code=410, detail="URL has expired")
     except ShortCodeNotFoundError:
         raise HTTPException(status_code=404, detail="Short code not found")
-
-    
-
-
-
-
-
-
-
-

@@ -112,6 +112,33 @@ python -c "from db.database import init_db; import asyncio; asyncio.run(init_db(
 
 ## Running the Application
 
+## Docker (LAN-only Prototype)
+
+This setup runs FastAPI + Streamlit + Celery + Postgres + Redis via Docker Compose.
+
+1. Start everything:
+
+```bash
+docker compose up --build
+```
+
+2. Open from any device on your home Wi-Fi:
+
+- Streamlit UI: `http://192.168.1.50:8501`
+- API docs: `http://192.168.1.50:8001/docs`
+- Health check: `http://192.168.1.50:8001/health`
+
+Notes:
+
+- Streamlit talks to the API using the internal compose URL (`API_BASE=http://api:8001`) but displays clickable short links using `PUBLIC_API_BASE`.
+- If your server IP changes, update `PUBLIC_API_BASE` in `docker-compose.yml`.
+
+To reset all data (Postgres + Redis):
+
+```bash
+docker compose down -v
+```
+
 ### Quick Start (All Services)
 
 Use the convenience scripts to start/stop all services at once:
