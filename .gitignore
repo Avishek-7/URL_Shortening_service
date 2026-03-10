@@ -58,5 +58,8 @@ dmypy.json
 celerybeat-schedule
 celerybeat.pid
 
+# Service management
+.service_pids
+
 # Redis dumps
 dump.rdb

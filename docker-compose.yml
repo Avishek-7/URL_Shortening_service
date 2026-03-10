@@ -1,0 +1,99 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: shortly
+      POSTGRES_USER: shortly
+      POSTGRES_PASSWORD: shortly
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shortly -d shortly"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  init-db:
+    build: .
+    command: ["python", "scripts/init_db.py"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://shortly:shortly@postgres:5432/shortly
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://shortly:shortly@postgres:5432/shortly
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      FLUSH_CLICKS_INTERVAL_SECONDS: "60"
+      CELERY_TIMEZONE: UTC
+      RATE_LIMIT: 5/minute
+      RATE_LIMIT_BURST: "10"
+    ports:
+      - "8001:8001"
+    depends_on:
+      init-db:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["celery", "-A", "services.tasks.celery_app", "worker", "--beat", "--loglevel=info"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://shortly:shortly@postgres:5432/shortly
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      FLUSH_CLICKS_INTERVAL_SECONDS: "60"
+      CELERY_TIMEZONE: UTC
+    depends_on:
+      init-db:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  streamlit:
+    build: .
+    command:
+      - streamlit
+      - run
+      - streamlit_app.py
+      - --server.address
+      - 0.0.0.0
+      - --server.port
+      - "8501"
+    environment:
+      API_BASE: http://api:8001
+      PUBLIC_API_BASE: http://192.168.1.50:8001
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -29,22 +29,26 @@ URL_Shortening_service/
 ├── db/
 │   └── database.py          # Async database configuration
 ├── models/
-│   ├── url.py              # URL database model
-│   └── user.py             # User model (future auth)
+│   ├── url.py               # URL database model
+│   └── user.py              # User model (future auth)
 ├── routes/
 │   ├── __init__.py
-│   └── url.py              # URL endpoints
+│   └── url.py               # URL endpoints
 ├── schemas/
-│   └── url_schemas.py      # Pydantic request/response models
+│   └── url_schemas.py       # Pydantic request/response models
 ├── services/
-│   ├── exceptions.py       # Domain exceptions
-│   ├── tasks.py            # Celery tasks
-│   └── url_service.py      # Business logic
+│   ├── exceptions.py        # Domain exceptions
+│   ├── tasks.py             # Celery tasks
+│   └── url_service.py       # Business logic
 ├── utils/
-│   └── encoder.py          # Base62 encoding
-├── main.py                 # FastAPI application
+│   └── encoder.py           # Base62 encoding
+├── logs/                     # Application logs
+├── main.py                   # FastAPI application
+├── streamlit_app.py          # Streamlit frontend UI
+├── start.sh                  # Start all services
+├── stop.sh                   # Stop all services
 ├── requirements.txt
-└── .env                    # Environment variables
+└── .env                      # Environment variables
 ```
 
 ## Setup
@@ -108,21 +112,72 @@ python -c "from db.database import init_db; import asyncio; asyncio.run(init_db(
 
 ## Running the Application
 
-### Start the API server:
+## Docker (LAN-only Prototype)
+
+This setup runs FastAPI + Streamlit + Celery + Postgres + Redis via Docker Compose.
+
+1. Start everything:
+
 ```bash
-uvicorn main:app --reload
+docker compose up --build
 ```
 
-The API will be available at `http://127.0.0.1:8000`
+2. Open from any device on your home Wi-Fi:
 
-### Start Celery worker (for background tasks):
+- Streamlit UI: `http://192.168.1.50:8501`
+- API docs: `http://192.168.1.50:8001/docs`
+- Health check: `http://192.168.1.50:8001/health`
+
+Notes:
+
+- Streamlit talks to the API using the internal compose URL (`API_BASE=http://api:8001`) but displays clickable short links using `PUBLIC_API_BASE`.
+- If your server IP changes, update `PUBLIC_API_BASE` in `docker-compose.yml`.
+
+To reset all data (Postgres + Redis):
+
+```bash
+docker compose down -v
+```
+
+### Quick Start (All Services)
+
+Use the convenience scripts to start/stop all services at once:
+
+```bash
+# Start FastAPI, Celery, and Streamlit
+./start.sh
+
+# Stop all services
+./stop.sh
+```
+
+This will start:
+- **FastAPI**: `http://localhost:8001`
+- **Streamlit UI**: `http://localhost:8501`
+- **Celery Worker + Beat**: Background task processing
+
+### Manual Start
+
+#### Start the API server:
+```bash
+uvicorn main:app --port 8001 --reload
+```
+
+The API will be available at `http://localhost:8001`
+
+#### Start Celery worker (for background tasks):
 ```bash
 celery -A services.tasks.celery_app worker --loglevel=info
 ```
 
-### Optional: Schedule periodic click count flushes with Celery Beat:
+#### Start Celery Beat (periodic task scheduler):
 ```bash
 celery -A services.tasks.celery_app beat --loglevel=info
+```
+
+#### Start Streamlit Frontend:
+```bash
+streamlit run streamlit_app.py --server.port 8501
 ```
 
 ## API Endpoints
@@ -142,7 +197,8 @@ Content-Type: application/json
 **Response:**
 ```json
 {
-  "short_code": "abc123"
+  "short_code": "abc123",
+  "long_url": "https://www.example.com/some/long/path"
 }
 ```
 
@@ -179,9 +235,15 @@ GET /url/{short_code}
 
 ### Redis Caching Strategy
 
-1. **URL Cache** (`short:{code}`): Stores long URL for fast redirects
+1. **URL Cache** (`short:{code}`): Stores long URL for fast redirects with TTL set from DB expiration
 2. **Click Counters** (`url:clicks:{code}`): Eventual consistency for high-write performance
-3. **Metadata Cache** (`url:meta:{code}`): Full URL metadata with click deltas
+3. **Metadata Cache** (`url:meta:{code}`): URL metadata and click deltas cached with the same TTL as the URL
+
+#### Caching Behavior
+- Best practice: Do not store `expires_at` in Redis; rely on key TTL.
+- On Redis hit: Serve directly from cache without querying the database.
+- On Redis miss: Query DB, validate expiration, then cache with appropriate TTL.
+- Metadata cache excludes `expires_at` to avoid DB checks on cache hits; it is returned only when fetched from DB on cache miss.
 
 ### Eventual Consistency
 
@@ -194,10 +256,158 @@ Click increments are written to Redis counters immediately, then periodically fl
 
 Custom exceptions (`UrlExpiredError`, `ShortCodeNotFoundError`) are raised in the service layer and mapped to HTTP status codes at the API boundary.
 
+## Architecture Diagrams
+
+### System Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           URL Shortening Service                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌──────────────┐         ┌──────────────┐         ┌──────────────┐       │
+│   │   Streamlit  │         │   FastAPI    │         │    Celery    │       │
+│   │   Frontend   │────────▶│   Backend    │────────▶│   Worker     │       │
+│   │  (Port 8501) │         │  (Port 8001) │         │   + Beat     │       │
+│   └──────────────┘         └──────┬───────┘         └──────┬───────┘       │
+│                                   │                        │               │
+│                    ┌──────────────┼────────────────────────┘               │
+│                    │              │                                        │
+│                    ▼              ▼                                        │
+│            ┌──────────────┐  ┌──────────────┐                              │
+│            │    Redis     │  │  PostgreSQL  │                              │
+│            │   (Cache +   │  │  (Persistent │                              │
+│            │    Broker)   │  │   Storage)   │                              │
+│            └──────────────┘  └──────────────┘                              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### URL Shortening Flow
+
+```
+┌────────┐      POST /url/create       ┌──────────┐
+│ Client │ ───────────────────────────▶│ FastAPI  │
+└────────┘                             └────┬─────┘
+                                            │
+                    ┌───────────────────────┼───────────────────────┐
+                    │                       ▼                       │
+                    │            ┌─────────────────────┐            │
+                    │            │  Generate Short Code │            │
+                    │            │  (Base62 Encoding)   │            │
+                    │            └──────────┬──────────┘            │
+                    │                       │                       │
+                    │         ┌─────────────┴─────────────┐         │
+                    │         ▼                           ▼         │
+                    │  ┌─────────────┐             ┌───────────┐    │
+                    │  │  PostgreSQL │             │   Redis   │    │
+                    │  │  (persist)  │             │  (cache)  │    │
+                    │  └─────────────┘             └───────────┘    │
+                    │                                               │
+                    └───────────────────────────────────────────────┘
+                                            │
+                                            ▼
+                               ┌────────────────────────┐
+                               │ Return: { short_code } │
+                               └────────────────────────┘
+```
+
+### URL Redirect Flow
+
+```
+┌────────┐       GET /r/{code}        ┌──────────┐
+│ Client │ ──────────────────────────▶│ FastAPI  │
+└────────┘                            └────┬─────┘
+                                           │
+                                           ▼
+                                  ┌─────────────────┐
+                                  │   Check Redis   │
+                                  │     Cache       │
+                                  └────────┬────────┘
+                                           │
+                         ┌─────────────────┴─────────────────┐
+                         │                                   │
+                    Cache Hit                           Cache Miss
+                         │                                   │
+                         │                                   ▼
+                         │                        ┌─────────────────┐
+                         │                        │ Query PostgreSQL│
+                         │                        │  + Cache Result │
+                         │                        └────────┬────────┘
+                         │                                 │
+                         └─────────────┬───────────────────┘
+                                       │
+                                       ▼
+                            ┌─────────────────────┐
+                            │  Increment Click    │
+                            │  Counter (Redis)    │
+                            └──────────┬──────────┘
+                                       │
+                                       ▼
+                             ┌───────────────────┐
+                             │  302 Redirect to  │
+                             │    Original URL   │
+                             └───────────────────┘
+```
+
+### Click Tracking (Eventual Consistency)
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        Click Tracking Pipeline                           │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────┐    Immediate     ┌─────────┐    Periodic    ┌───────────┐  │
+│  │ Redirect │ ──────────────▶ │  Redis  │ ─────────────▶ │PostgreSQL │  │
+│  │ Request  │   Increment     │ Counter │   Batch Flush  │   (sync)  │  │
+│  └─────────┘                  └─────────┘   (Celery Beat) └───────────┘  │
+│                                                                          │
+│  Benefits:                                                               │
+│  • Low latency redirects (no DB write on each request)                   │
+│  • High throughput (Redis handles concurrent increments)                 │
+│  • Eventual consistency (clicks sync to DB periodically)                 │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Component Interaction
+
+```
+                              ┌─────────────────────────────────┐
+                              │          User Interfaces        │
+                              ├─────────────────────────────────┤
+                              │  Streamlit UI  │  API Clients   │
+                              └────────┬───────┴───────┬────────┘
+                                       │               │
+                                       ▼               ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                              FastAPI Layer                               │
+├──────────────────────────────────────────────────────────────────────────┤
+│  routes/url.py  │  Rate Limiter (SlowAPI)  │  Exception Handlers        │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │
+                                     ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                            Service Layer                                 │
+├──────────────────────────────────────────────────────────────────────────┤
+│  url_service.py  │  exceptions.py  │  tasks.py (Celery)                 │
+└────────────┬─────────────────────────────────────────┬───────────────────┘
+             │                                         │
+             ▼                                         ▼
+┌────────────────────────┐                 ┌────────────────────────┐
+│      Data Layer        │                 │     Cache Layer        │
+├────────────────────────┤                 ├────────────────────────┤
+│  models/url.py         │                 │  Redis                 │
+│  models/user.py        │                 │  • URL Cache           │
+│  db/database.py        │                 │  • Click Counters      │
+│  PostgreSQL + asyncpg  │                 │  • Metadata Cache      │
+└────────────────────────┘                 └────────────────────────┘
+```
+
 ## Interactive API Documentation
 
-- Swagger UI: `http://127.0.0.1:8000/docs`
-- ReDoc: `http://127.0.0.1:8000/redoc`
+- Swagger UI: `http://localhost:8001/docs`
+- ReDoc: `http://localhost:8001/redoc`
 
 ## Development
 
@@ -217,15 +427,45 @@ black .
 ruff check --fix .
 ```
 
+## Streamlit Frontend
+
+The project includes a Streamlit-based web UI for easy URL shortening:
+
+```
+┌─────────────────────────────────────────────────────┐
+│              URL Shortener (Streamlit)              │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  Long URL: [____________________________]           │
+│                                                     │
+│  Expire in days: [7]                                │
+│                                                     │
+│  [      Shorten      ]                              │
+│                                                     │
+│  ✅ Short URL created                               │
+│  ┌─────────────────────────────────────────────┐   │
+│  │ http://localhost:8001/r/abc123              │   │
+│  └─────────────────────────────────────────────┘   │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+```
+
+**Features:**
+- Simple, user-friendly interface
+- Configurable API base URL
+- Adjustable URL expiration
+- Direct link to shortened URL
+
 ## Future Enhancements
 
 - [ ] User authentication with JWT
-- [ ] Custom alias support
 - [ ] URL validation and safety checks
 - [ ] Analytics dashboard
 - [ ] QR code generation
 - [ ] API key management
 - [ ] Webhook notifications
+- [ ] Bulk URL shortening
+- [ ] URL edit/delete functionality
 
 ## License
 
